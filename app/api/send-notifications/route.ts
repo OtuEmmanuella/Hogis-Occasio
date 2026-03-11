@@ -7,22 +7,15 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 )
 
-// Create Gmail transporter
 function getTransporter() {
   const user = process.env.GMAIL_USER
   const pass = process.env.GMAIL_APP_PASSWORD
-
   if (!user || !pass) throw new Error('GMAIL_USER or GMAIL_APP_PASSWORD missing from .env.local')
-
-  return nodemailer.createTransport({
-    service: 'gmail',
-    auth: { user, pass },
-  })
+  return nodemailer.createTransport({ service: 'gmail', auth: { user, pass } })
 }
 
 async function sendEmail(to: string, name: string, subject: string, message: string) {
   const transporter = getTransporter()
-  const fromName = 'Hogis Occasio'
   const fromEmail = process.env.GMAIL_USER!
 
   const html = `
@@ -79,14 +72,12 @@ async function sendEmail(to: string, name: string, subject: string, message: str
 </html>`
 
   console.log('[Gmail] Sending to:', to, '| from:', fromEmail)
-
   const info = await transporter.sendMail({
-    from: `"${fromName}" <${fromEmail}>`,
+    from: `"Hogis Occasio" <${fromEmail}>`,
     to,
     subject,
     html,
   })
-
   console.log('[Gmail] Message sent:', info.messageId)
   return info
 }
@@ -95,17 +86,28 @@ async function sendSMS(to: string, message: string) {
   const apiKey = process.env.AFRICASTALKING_API_KEY
   const username = process.env.AFRICASTALKING_USERNAME
 
-  if (!apiKey || apiKey === 'your_africastalking_api_key') throw new Error('Africa\'s Talking API key not configured')
-  if (!username || username === 'your_africastalking_username') throw new Error('Africa\'s Talking username not configured')
+  if (!apiKey || apiKey === 'your_africastalking_api_key') {
+    throw new Error("Africa's Talking API key not configured")
+  }
+  if (!username || username === 'your_africastalking_username') {
+    throw new Error("Africa's Talking username not configured")
+  }
 
+  // Strip + from phone number — AT expects 2349067359156 not +2349067359156
+  const formattedPhone = to.replace(/^\+/, '')
+
+  // Do NOT include 'from' (sender ID) until "HOGIS" is approved by Africa's Talking
+  // Unapproved sender IDs return InvalidSenderId with empty recipients
   const params = new URLSearchParams({
     username,
-    to,
+    to: formattedPhone,
     message,
-    from: process.env.AFRICASTALKING_SENDER_ID || 'HOGIS',
   })
 
-  const res = await fetch('https://api.africastalking.com/version1/messaging', {
+  const endpoint = 'https://api.africastalking.com/version1/messaging'
+  console.log('[AfricasTalking] Sending to:', formattedPhone, '| username:', username)
+
+  const res = await fetch(endpoint, {
     method: 'POST',
     headers: {
       'apiKey': apiKey,
@@ -115,9 +117,36 @@ async function sendSMS(to: string, message: string) {
     body: params.toString(),
   })
 
-  const body = await res.json()
-  console.log('[AfricasTalking] Response:', JSON.stringify(body))
-  if (!res.ok) throw new Error(`Africa's Talking error: ${JSON.stringify(body)}`)
+  const rawBody = await res.text()
+  console.log('[AfricasTalking] Status:', res.status, '| Raw:', rawBody)
+
+  // Parse safely — AT sometimes returns plain text not JSON
+  let body: any = null
+  try {
+    body = JSON.parse(rawBody)
+  } catch {
+    throw new Error(`Africa's Talking error: ${rawBody}`)
+  }
+
+  if (!res.ok) {
+    throw new Error(`Africa's Talking HTTP error ${res.status}: ${JSON.stringify(body)}`)
+  }
+
+  const messageData = body?.SMSMessageData
+  const recipients = messageData?.Recipients
+
+  // Catch InvalidSenderId and other message-level failures (200 but empty recipients)
+  if (!recipients || recipients.length === 0) {
+    throw new Error(`Africa's Talking rejected: ${messageData?.Message || 'No recipients — check sender ID or account status'}`)
+  }
+
+  const recipient = recipients[0]
+  if (recipient.status !== 'Success') {
+    throw new Error(`Africa's Talking delivery failed: ${recipient.status} (code: ${recipient.statusCode})`)
+  }
+
+  console.log('[AfricasTalking] Success:', recipient.status, '| Cost:', recipient.cost)
+  return body
 }
 
 function personalizeMessage(template: string, name: string): string {
@@ -130,6 +159,7 @@ export async function POST(req: NextRequest) {
 
     console.log('[SendNotifications] Request:', { holidayId, groups, guestIds, channels })
     console.log('[SendNotifications] GMAIL_USER set:', !!process.env.GMAIL_USER)
+    console.log('[SendNotifications] AT username:', process.env.AFRICASTALKING_USERNAME)
 
     const { data: holiday, error: hErr } = await supabaseAdmin
       .from('holidays')
@@ -146,11 +176,11 @@ export async function POST(req: NextRequest) {
 
     let query = supabaseAdmin.from('guests').select('*').eq('is_active', true)
     if (guestIds && guestIds.length > 0) {
-      query = query.in('id', guestIds)           // individual selection
+      query = query.in('id', guestIds)
     } else if (groups && groups.length > 0) {
-      query = query.in('group_name', groups)      // group selection
+      query = query.in('group_name', groups)
     }
-    // else: no filter = send to all active guests
+
     const { data: guests, error: gErr } = await query
 
     if (gErr) {
@@ -164,7 +194,7 @@ export async function POST(req: NextRequest) {
 
     console.log('[SendNotifications] Guests found:', guests.length)
 
-    const message = customMessage || holiday.message_template || `Happy ${holiday.name}! 🎉 Warm wishes from the Hogis family!`
+    const message = customMessage || holiday.message_template || `Happy ${holiday.name}! Warm wishes from the Hogis family!`
     const subject = `${holiday.emoji} Happy ${holiday.name} from Hogis!`
 
     let sent = 0
@@ -180,12 +210,12 @@ export async function POST(req: NextRequest) {
         try {
           await sendEmail(guest.email, guest.name, subject, personalMsg)
           sent++
-          console.log('[SendNotifications] ✅ Email sent to:', guest.email)
+          console.log('[SendNotifications] Email sent to:', guest.email)
         } catch (err: any) {
           status = 'failed'
           errorMsg = err.message
           failed++
-          console.error('[SendNotifications] ❌ Email FAILED for:', guest.email, '|', err.message)
+          console.error('[SendNotifications] Email FAILED:', guest.email, '|', err.message)
         }
         logs.push({
           guest_id: guest.id,
@@ -205,12 +235,12 @@ export async function POST(req: NextRequest) {
           const smsMsg = `${holiday.emoji} ${personalMsg}`.substring(0, 160)
           await sendSMS(guest.phone, smsMsg)
           sent++
-          console.log('[SendNotifications] ✅ SMS sent to:', guest.phone)
+          console.log('[SendNotifications] SMS sent to:', guest.phone)
         } catch (err: any) {
           status = 'failed'
           errorMsg = err.message
           failed++
-          console.error('[SendNotifications] ❌ SMS FAILED for:', guest.phone, '|', err.message)
+          console.error('[SendNotifications] SMS FAILED:', guest.phone, '|', err.message)
         }
         logs.push({
           guest_id: guest.id,
@@ -230,7 +260,6 @@ export async function POST(req: NextRequest) {
     }
 
     console.log('[SendNotifications] Done — sent:', sent, 'failed:', failed)
-
     return NextResponse.json({ success: true, sent, failed, total: sent + failed, holiday: holiday.name })
 
   } catch (err: any) {
