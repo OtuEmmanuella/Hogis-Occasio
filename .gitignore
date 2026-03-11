@@ -1,0 +1,57 @@
+# ─── Environment Variables ───
+.env
+.env.local
+.env.development
+.env.development.local
+.env.test
+.env.test.local
+.env.production
+.env.production.local
+
+# ─── Next.js ───
+.next/
+out/
+build/
+
+# ─── Node ───
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# ─── Package managers ───
+.yarn/install-state.gz
+.pnp.*
+
+# ─── TypeScript ───
+*.tsbuildinfo
+next-env.d.ts
+
+# ─── OS Files ───
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ─── IDE / Editor ───
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+
+# ─── Logs ───
+logs/
+*.log
+
+# ─── Misc ───
+.vercel
+.turbo
+coverage/
+.nyc_output/
