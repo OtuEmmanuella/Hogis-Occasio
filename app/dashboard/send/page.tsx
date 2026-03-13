@@ -30,7 +30,7 @@ export default function SendPage() {
   const [showAllGuests, setShowAllGuests] = useState(false)
 
   const groups = useMemo(() => {
-    const g = [...new Set(guests.map(g => g.group_name || 'General').filter(Boolean))]
+    const g = Array.from(new Set(guests.map(g => g.group_name || 'General').filter(Boolean)))
     return g as string[]
   }, [guests])
 
@@ -89,7 +89,7 @@ export default function SendPage() {
     setSelectedGuestIds(prev => {
       const allSelected = ids.every(id => prev.includes(id))
       if (allSelected) return prev.filter(id => !ids.includes(id))
-      return [...new Set([...prev, ...ids])]
+      return Array.from(new Set([...prev, ...ids]))
     })
   }
 

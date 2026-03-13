@@ -82,72 +82,98 @@ async function sendEmail(to: string, name: string, subject: string, message: str
   return info
 }
 
+
 async function sendSMS(to: string, message: string) {
-  const apiKey = process.env.AFRICASTALKING_API_KEY
-  const username = process.env.AFRICASTALKING_USERNAME
+  const provider = process.env.SMS_PROVIDER || 'ebulksms'
 
-  if (!apiKey || apiKey === 'your_africastalking_api_key') {
-    throw new Error("Africa's Talking API key not configured")
+  // ── eBulkSMS (default) ──────────────────────────────────────────
+  if (provider === 'ebulksms') {
+    const username = process.env.EBULKSMS_USERNAME
+    const apiKey = process.env.EBULKSMS_API_KEY
+    if (!username) throw new Error('EBULKSMS_USERNAME not configured')
+    if (!apiKey) throw new Error('EBULKSMS_API_KEY not configured')
+
+    const senderId = process.env.EBULKSMS_SENDER_ID || 'Hogis'
+    const formattedPhone = to.replace(/^\+/, '') // 2349067359156 not +2349067359156
+
+    const payload = {
+      SMS: {
+        auth: { username, apikey: apiKey },
+        message: { sender: senderId, messagetext: message, flash: '0' },
+        recipients: { gsm: [{ msidn: formattedPhone }] },
+      },
+    }
+
+    console.log('[eBulkSMS] Sending to:', formattedPhone, '| sender:', senderId)
+
+    const res = await fetch('https://api.ebulksms.com/sendsms.json', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+
+    const rawText = await res.text()
+    console.log('[eBulkSMS] Status:', res.status, '| Raw:', rawText)
+
+    let body: any = null
+    try { body = JSON.parse(rawText) } catch { throw new Error(`eBulkSMS error: ${rawText}`) }
+
+    if (!res.ok) throw new Error(`eBulkSMS HTTP error ${res.status}: ${JSON.stringify(body)}`)
+
+    // eBulkSMS returns STATUS_CODE 1801 for success
+    const statusCode = body?.SMS?.STATUS?.STATUS_CODE
+    const statusText = body?.SMS?.STATUS?.STATUS_TEXT
+    if (statusCode && statusCode !== '1801') {
+      throw new Error(`eBulkSMS failed: ${statusText || JSON.stringify(body)}`)
+    }
+
+    console.log('[eBulkSMS] ✅ SMS sent successfully | Balance:', body?.SMS?.BALANCE)
+    return body
+
+  // ── Africa's Talking (fallback) ─────────────────────────────────
+  } else if (provider === 'africastalking') {
+    const apiKey = process.env.AFRICASTALKING_API_KEY
+    const username = process.env.AFRICASTALKING_USERNAME
+    if (!apiKey) throw new Error("Africa's Talking API key not configured")
+    if (!username) throw new Error("Africa's Talking username not configured")
+
+    const formattedPhone = to.replace(/^\+/, '')
+    const params = new URLSearchParams({ username, to: formattedPhone, message })
+
+    console.log('[AfricasTalking] Sending to:', formattedPhone)
+
+    const res = await fetch('https://api.africastalking.com/version1/messaging', {
+      method: 'POST',
+      headers: {
+        'apiKey': apiKey,
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Accept': 'application/json',
+      },
+      body: params.toString(),
+    })
+
+    const rawBody = await res.text()
+    console.log('[AfricasTalking] Status:', res.status, '| Raw:', rawBody)
+
+    let body: any = null
+    try { body = JSON.parse(rawBody) } catch { throw new Error(`Africa's Talking error: ${rawBody}`) }
+    if (!res.ok) throw new Error(`Africa's Talking error: ${JSON.stringify(body)}`)
+
+    const recipients = body?.SMSMessageData?.Recipients
+    if (!recipients || recipients.length === 0) {
+      throw new Error(`Africa's Talking rejected: ${body?.SMSMessageData?.Message || 'No recipients'}`)
+    }
+
+    const recipient = recipients[0]
+    if (recipient.status !== 'Success') throw new Error(`Africa's Talking failed: ${recipient.status}`)
+
+    console.log('[AfricasTalking] ✅ Success | Cost:', recipient.cost)
+    return body
   }
-  if (!username || username === 'your_africastalking_username') {
-    throw new Error("Africa's Talking username not configured")
-  }
 
-  // Strip + from phone number — AT expects 2349067359156 not +2349067359156
-  const formattedPhone = to.replace(/^\+/, '')
-
-  // Do NOT include 'from' (sender ID) until "HOGIS" is approved by Africa's Talking
-  // Unapproved sender IDs return InvalidSenderId with empty recipients
-  const params = new URLSearchParams({
-    username,
-    to: formattedPhone,
-    message,
-  })
-
-  const endpoint = 'https://api.africastalking.com/version1/messaging'
-  console.log('[AfricasTalking] Sending to:', formattedPhone, '| username:', username)
-
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'apiKey': apiKey,
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Accept': 'application/json',
-    },
-    body: params.toString(),
-  })
-
-  const rawBody = await res.text()
-  console.log('[AfricasTalking] Status:', res.status, '| Raw:', rawBody)
-
-  // Parse safely — AT sometimes returns plain text not JSON
-  let body: any = null
-  try {
-    body = JSON.parse(rawBody)
-  } catch {
-    throw new Error(`Africa's Talking error: ${rawBody}`)
-  }
-
-  if (!res.ok) {
-    throw new Error(`Africa's Talking HTTP error ${res.status}: ${JSON.stringify(body)}`)
-  }
-
-  const messageData = body?.SMSMessageData
-  const recipients = messageData?.Recipients
-
-  // Catch InvalidSenderId and other message-level failures (200 but empty recipients)
-  if (!recipients || recipients.length === 0) {
-    throw new Error(`Africa's Talking rejected: ${messageData?.Message || 'No recipients — check sender ID or account status'}`)
-  }
-
-  const recipient = recipients[0]
-  if (recipient.status !== 'Success') {
-    throw new Error(`Africa's Talking delivery failed: ${recipient.status} (code: ${recipient.statusCode})`)
-  }
-
-  console.log('[AfricasTalking] Success:', recipient.status, '| Cost:', recipient.cost)
-  return body
+  throw new Error(`Unknown SMS provider: ${provider}`)
 }
+
 
 function personalizeMessage(template: string, name: string): string {
   return template.replace(/\{\{name\}\}/g, name).replace(/\{name\}/g, name)
@@ -232,7 +258,12 @@ export async function POST(req: NextRequest) {
         let status = 'sent'
         let errorMsg = null
         try {
-          const smsMsg = `${holiday.emoji} ${personalMsg}`.substring(0, 160)
+          // Strip emojis — they force UCS-2 encoding which cuts SMS to 70 chars
+          // and shows as ? or garbled signs on Nigerian phones
+          const stripEmojis = (str: string) =>
+            str.replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{FE00}-\u{FE0F}\u2764\u2665]/gu, '').replace(/\s+/g, ' ').trim()
+          // 459 chars = 3 SMS parts (each 153 chars) — full message gets through
+          const smsMsg = stripEmojis(personalMsg).substring(0, 459)
           await sendSMS(guest.phone, smsMsg)
           sent++
           console.log('[SendNotifications] SMS sent to:', guest.phone)

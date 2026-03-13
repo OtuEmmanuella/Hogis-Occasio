@@ -70,7 +70,7 @@ export default function DashboardPage() {
       .order('created_at', { ascending: false })
       .limit(6)
 
-    setActivityLogs((logs as ActivityLog[]) || [])
+    setActivityLogs((logs as unknown as ActivityLog[]) || [])
     setLoadingActivity(false)
     setLastRefreshed(new Date())
   }, [])
