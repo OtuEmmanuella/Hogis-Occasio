@@ -239,7 +239,7 @@ export default function SendPage() {
                   <div className="flex gap-4">
                     {[
                       { key: 'email', icon: Mail,  label: 'Email',  sub: 'Via Gmail',          color: '#00f5ff' },
-                      { key: 'sms',   icon: Phone, label: 'SMS',    sub: "Via Africa's Talking", color: '#ffd700' },
+                      { key: 'sms',   icon: Phone, label: 'SMS',    sub: "Via EBulk SMS", color: '#ffd700' },
                     ].map(ch => (
                       <button
                         key={ch.key}
