@@ -259,7 +259,7 @@ export default function DashboardPage() {
               </div>
             ) : activityLogs.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 gap-3">
-                <Send size={32} style={{ color: 'rgba(0,245,255,0.15)' }} />
+                <Send size={32} style={{ color: 'rgba(0,245,255,0.14)' }} />
                 <p className="text-sm text-center" style={{ color: 'rgba(230,237,243,0.35)' }}>
                   No notifications sent yet
                 </p>
