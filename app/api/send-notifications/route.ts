@@ -48,7 +48,7 @@ async function sendEmail(to: string, name: string, subject: string, message: str
     <div class="header">
       <div class="logo-powered">POWERED BY</div>
       <div class="logo-main">HOGIS</div>
-      <div class="logo-sub">OCCASIO</div>
+      <div class="logo-sub">GROUP</div>
     </div>
     <div class="body">
       <p class="greeting">Hello <strong>${name}</strong>,</p>
@@ -73,7 +73,7 @@ async function sendEmail(to: string, name: string, subject: string, message: str
 
   console.log('[Gmail] Sending to:', to, '| from:', fromEmail)
   const info = await transporter.sendMail({
-    from: `"Hogis Occasio" <${fromEmail}>`,
+    from: `"Hogis Group" <${fromEmail}>`,
     to,
     subject,
     html,
