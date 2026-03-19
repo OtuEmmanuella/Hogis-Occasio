@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
   LayoutDashboard, Users, CalendarDays, Send, History,
-  Settings, Zap, ChevronRight, Bell
+  Settings, Zap, ChevronRight, Bell, Upload
 } from 'lucide-react'
 import { useState } from 'react'
 
@@ -16,6 +16,7 @@ const NAV_ITEMS = [
   { href: '/dashboard/send',      icon: Send,            label: 'Send Now',     badge: 'HOT' },
   { href: '/dashboard/history',   icon: History,         label: 'History',      badge: null },
   { href: '/dashboard/settings',  icon: Settings,        label: 'Settings',     badge: null },
+  { href: '/dashboard/import',    icon: Upload,          label: 'Import',       badge: null },
 ]
 
 export default function Sidebar() {
