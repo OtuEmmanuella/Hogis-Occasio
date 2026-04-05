@@ -6,28 +6,37 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 )
 
-// This cron job no longer SENDS — it just ENQUEUES pending notifications
-// then immediately triggers the first batch via /api/process-batch
+// Accepts BOTH header formats:
+// cron-job.org sends:  x-cron-secret: hogis-cron-2026-secret
+// process-batch sends: Authorization: Bearer hogis-cron-2026-secret
+function isAuthorized(req: NextRequest): boolean {
+  const secret = process.env.CRON_SECRET
+  if (!secret) return false
+  const xSecret = req.headers.get('x-cron-secret')
+  const bearer = req.headers.get('authorization')
+  return xSecret === secret || bearer === `Bearer ${secret}`
+}
+
 export async function GET(req: NextRequest) {
-  const authHeader = req.headers.get('authorization')
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!isAuthorized(req)) {
+    console.error('[Cron] Unauthorized request')
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   try {
-    const today = new Date()
-    const mm = String(today.getMonth() + 1).padStart(2, '0')
-    const dd = String(today.getDate()).padStart(2, '0')
-    const todayStr = `${mm}-${dd}` // e.g. "04-01"
+    // Get today's date in Nigeria WAT (UTC+1)
+    const now = new Date()
+    now.setHours(now.getHours() + 1)
+    const todayStr = now.toISOString().split('T')[0] // YYYY-MM-DD e.g. 2026-04-05
 
-    console.log('[Cron] Checking holidays for:', todayStr)
+    console.log('[Cron] Running for date:', todayStr)
 
-    // Find holidays that match today and are auto-send enabled
+    // Find active holidays for today
     const { data: holidays, error: hErr } = await supabaseAdmin
       .from('holidays')
       .select('*')
-      .eq('date_mm_dd', todayStr)
-      .eq('auto_send', true)
+      .eq('date', todayStr)
+      .eq('is_active', true)
 
     if (hErr) {
       console.error('[Cron] Holiday query error:', hErr)
@@ -35,27 +44,37 @@ export async function GET(req: NextRequest) {
     }
 
     if (!holidays || holidays.length === 0) {
-      console.log('[Cron] No holidays today.')
-      return NextResponse.json({ message: 'No holidays today', queued: 0 })
+      console.log('[Cron] No holidays today:', todayStr)
+      return NextResponse.json({ message: 'No holidays today', date: todayStr, queued: 0 })
+    }
+
+    console.log('[Cron] Holidays found:', holidays.map((h: any) => h.name))
+
+    // Fetch all active guests once
+    const { data: guests, error: gErr } = await supabaseAdmin
+      .from('guests')
+      .select('id, email, phone, notify_email, notify_sms')
+      .eq('is_active', true)
+
+    if (gErr || !guests || guests.length === 0) {
+      console.log('[Cron] No active guests found')
+      return NextResponse.json({ message: 'No active guests', date: todayStr })
     }
 
     let totalQueued = 0
 
     for (const holiday of holidays) {
-      console.log('[Cron] Queueing holiday:', holiday.name)
+      console.log('[Cron] Queuing:', holiday.name)
 
-      // Fetch all active guests
-      const { data: guests, error: gErr } = await supabaseAdmin
-        .from('guests')
-        .select('id, email, phone, notify_email, notify_sms')
-        .eq('is_active', true)
+      // Clear any leftover pending/processing rows for this holiday
+      // (in case cron ran before and failed mid-way)
+      await supabaseAdmin
+        .from('notification_queue')
+        .delete()
+        .eq('holiday_id', holiday.id)
+        .in('status', ['pending', 'processing'])
 
-      if (gErr || !guests || guests.length === 0) {
-        console.error('[Cron] No guests found for holiday:', holiday.name)
-        continue
-      }
-
-      // Insert one queue row per guest per channel
+      // Build queue rows — one per guest per channel
       const queueRows: any[] = []
       for (const guest of guests) {
         if (guest.notify_email && guest.email) {
@@ -76,7 +95,7 @@ export async function GET(req: NextRequest) {
         }
       }
 
-      // Batch-insert in chunks of 500 to avoid payload limits
+      // Insert in chunks of 500
       const CHUNK = 500
       for (let i = 0; i < queueRows.length; i += CHUNK) {
         const { error: qErr } = await supabaseAdmin
@@ -89,8 +108,8 @@ export async function GET(req: NextRequest) {
       console.log(`[Cron] Queued ${queueRows.length} items for: ${holiday.name}`)
     }
 
-    // Kick off the first batch — fire and forget (don't await)
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://your-app.vercel.app'
+    // Fire first batch — don't await, just kick it off
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://hogis-occasio.netlify.app'
     fetch(`${baseUrl}/api/process-batch`, {
       method: 'POST',
       headers: {
@@ -99,7 +118,13 @@ export async function GET(req: NextRequest) {
       },
     }).catch((e) => console.error('[Cron] Failed to trigger first batch:', e))
 
-    return NextResponse.json({ success: true, queued: totalQueued })
+    return NextResponse.json({
+      success: true,
+      date: todayStr,
+      holidays: holidays.map((h: any) => h.name),
+      queued: totalQueued,
+    })
+
   } catch (err: any) {
     console.error('[Cron] Unhandled error:', err)
     return NextResponse.json({ error: err.message }, { status: 500 })
